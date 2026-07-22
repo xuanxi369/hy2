@@ -2,7 +2,7 @@
 
 `hy2-secure.sh` 是对原脚本的安全重构版，目标平台为 Debian/Ubuntu + systemd。
 
-VPS配置适配：
+VPS适配：
 
 最低极限支持：128 MB 内存（低内存模式）
 
