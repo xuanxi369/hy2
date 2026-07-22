@@ -1,0 +1,82 @@
+# Hysteria 2 安全生产部署脚本
+
+`hy2-secure.sh` 是对原脚本的安全重构版，目标平台为 Debian/Ubuntu + systemd。
+
+## 关键变化
+
+- 固定版本，默认 `v2.10.0`；只从 GitHub 官方 Release 下载。
+- `hashes.txt` 获取或 SHA-256 校验失败时立即终止。
+- 临时下载、精确文件名哈希匹配、原子替换。
+- 安装、重装、改端口、升级均创建备份；启动失败自动回滚。
+- systemd 使用专用 `hy2` 用户，只保留 `CAP_NET_BIND_SERVICE`。
+- 自签证书带 SAN；客户端配置自动加入 `pinSHA256`。
+- 正确生成纯 IPv6 地址及 URI 方括号。
+- custom 证书复制到受控目录，并验证私钥匹配、SAN 与 SNI。
+- 私网/链路本地地址保护 ACL 默认开启。
+- 文件日志配套 logrotate。
+- 检查 UDP 端口、ACME DNS、80/443 挑战端口、UFW/nftables 提示。
+- cgroup 感知的低内存检测。
+- 支持非交互、`--dry-run`、配置差异、升级与回滚。
+- 公网 IP 查询会明确提示，可用 `--no-public-ip-query` 禁止。
+
+## 使用
+
+```bash
+chmod +x hy2-secure.sh
+sudo ./hy2-secure.sh
+```
+
+非交互自签安装：
+
+```bash
+sudo ./hy2-secure.sh install --non-interactive --yes \
+  --version v2.10.0 --port 8443 --password '强密码'
+```
+
+ACME：
+
+```bash
+sudo ./hy2-secure.sh install --non-interactive --yes \
+  --cert-type acme --domain hy2.example.com --email admin@example.com \
+  --port 443 --password '强密码'
+```
+
+修改端口和密码（同样走备份、差异和回滚）：
+
+```bash
+sudo ./hy2-secure.sh configure --port 9443 --password '新密码' --yes
+```
+
+升级固定版本：
+
+```bash
+sudo ./hy2-secure.sh upgrade --version v2.10.0 --yes
+```
+
+只预览：
+
+```bash
+sudo ./hy2-secure.sh install --dry-run
+```
+
+离线安装必须同时提供二进制和从官方 Release 获取的 `hashes.txt`：
+
+```bash
+sudo ./hy2-secure.sh install \
+  --offline-binary ./hysteria-linux-amd64 \
+  --offline-hashes ./hashes.txt
+```
+
+## 测试
+
+```bash
+bash -n hy2-secure.sh
+shellcheck -x hy2-secure.sh test-hy2-secure.sh
+bash test-hy2-secure.sh
+```
+
+## 注意
+
+- 云厂商安全组仍需人工放行 UDP 服务端口。
+- 默认 ACL 会阻止客户端访问私网、回环和链路本地地址；确有需要时使用 `--allow-private`。
+- 脚本会保留 `/var/backups/hy2`，卸载不会自动删除备份和专用用户。
