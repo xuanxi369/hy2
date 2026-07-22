@@ -27,9 +27,16 @@
 
 ## 使用
 
+菜单模式
 ```bash
 chmod +x hy2-secure.sh
 sudo ./hy2-secure.sh
+```
+
+交互式安装（会询问所有配置）
+```bash
+chmod +x hy2-secure.sh
+sudo ./hy2-secure.sh install
 ```
 
 非交互自签安装：
