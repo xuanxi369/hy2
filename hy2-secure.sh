@@ -6,7 +6,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 027
 
-readonly SCRIPT_VERSION="3.0.0"
+readonly SCRIPT_VERSION="3.0.1"
 readonly DEFAULT_HY2_VERSION="v2.10.0"
 readonly HY2_REPO="apernet/hysteria"
 readonly HY2_BIN="/usr/local/bin/hy2"
@@ -319,7 +319,37 @@ create_service_user(){
   id "$HY2_USER" >/dev/null 2>&1 || run useradd --system --gid "$HY2_GROUP" --home-dir "$CONF_DIR" --shell /usr/sbin/nologin "$HY2_USER"
 }
 
-release_base(){ printf 'https://github.com/%s/releases/download/app%%2F%s' "$HY2_REPO" "$HY2_VERSION"; }
+release_base(){ printf 'https://github.com/%s/releases/download/app/%s' "$HY2_REPO" "$HY2_VERSION"; }
+extract_expected_hash(){
+  local hashes=$1 asset=$2
+  awk -v wanted="$asset" '
+    NF >= 2 {
+      hash=$1
+      file=$NF
+      sub(/^\*/, "", file)
+      gsub(/\\/, "/", file)
+      count=split(file, parts, "/")
+      base=parts[count]
+      if (base == wanted && hash ~ /^[[:xdigit:]]+$/ && length(hash) == 64) {
+        print tolower(hash)
+        exit
+      }
+    }
+    /^SHA256 \(/ {
+      line=$0
+      sub(/^SHA256 \(/, "", line)
+      split(line, pair, /\) = /)
+      file=pair[1]
+      count=split(file, parts, "/")
+      base=parts[count]
+      hash=pair[2]
+      if (base == wanted && hash ~ /^[[:xdigit:]]+$/ && length(hash) == 64) {
+        print tolower(hash)
+        exit
+      }
+    }
+  ' "$hashes"
+}
 secure_download_binary(){
   local out=$1 asset="hysteria-linux-${HY2_ARCH}" work hashes expected actual
   work=$(mktemp -d); hashes="$work/hashes.txt"
@@ -329,11 +359,19 @@ secure_download_binary(){
   else
     local base; base=$(release_base)
     info "仅从 GitHub 官方 Release 下载 ${HY2_VERSION}"
-    curl --proto '=https' --tlsv1.2 -fL --retry 3 --connect-timeout 15 -o "$out" "${base}/${asset}"
-    curl --proto '=https' --tlsv1.2 -fL --retry 3 --connect-timeout 15 -o "$hashes" "${base}/hashes.txt"
+    if ! curl --proto '=https' --tlsv1.2 -fL --retry 3 --connect-timeout 15 -o "$hashes" "${base}/hashes.txt"; then
+      die "无法下载 ${HY2_VERSION} 的 hashes.txt；该版本可能不存在，请检查 GitHub Release 标签"
+    fi
+    if ! curl --proto '=https' --tlsv1.2 -fL --retry 3 --connect-timeout 15 -o "$out" "${base}/${asset}"; then
+      die "无法下载 ${HY2_VERSION} 的 ${asset}；请确认版本和架构"
+    fi
   fi
-  expected=$(awk -v a="$asset" '$2==a || $2=="*"a {print $1; exit}' "$hashes")
-  [[ $expected =~ ^[0-9a-fA-F]{64}$ ]] || die "官方哈希中没有精确找到 ${asset}"
+  expected=$(extract_expected_hash "$hashes" "$asset")
+  [[ $expected =~ ^[0-9a-f]{64}$ ]] || {
+    warn "hashes.txt 中与当前架构有关的条目："
+    grep -F "${asset}" "$hashes" >&2 || true
+    die "官方哈希中没有找到文件名为 ${asset} 的精确条目"
+  }
   actual=$(sha256sum "$out" | awk '{print $1}')
   [[ ${actual,,} == ${expected,,} ]] || die "SHA-256 校验失败：期望 ${expected}，实际 ${actual}"
   [[ $(od -An -tx1 -N4 "$out" | tr -d ' \n') == 7f454c46 ]] || die "下载文件不是 ELF"
@@ -383,7 +421,7 @@ prepare_certificates(){
       local cert_pub key_pub
       cert_pub=$(openssl x509 -in "$CUSTOM_CERT" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | awk '{print $1}')
       key_pub=$(openssl pkey -in "$CUSTOM_KEY" -pubout -outform DER | sha256sum | awk '{print $1}')
-      [[ $cert_pub == "$key_pub" ]] || die "证书与私钥不匹配"
+      [[ $cert_pub == "$key_pub" ]] || die "证书与私��不匹配"
       cp "$CUSTOM_CERT" "$stage/certs/custom.crt"; cp "$CUSTOM_KEY" "$stage/certs/custom.key"
       ;;
     acme) ;;

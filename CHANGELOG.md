@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.1
+
+- 修复官方 `hashes.txt` 使用 `build/文件名` 时无法匹配资产的问题。
+- 仍按 basename 精确匹配，避免把 amd64 误匹配为 amd64-avx。
+- 同时兼容 GNU sha256sum 与 BSD `SHA256 (file) = hash` 格式。
+- 改为先下载 hashes.txt，再下载约 20 MB 二进制。
+- 不存在的版本现在给出明确提示，而不是原始 ERR 行号。
+- Release URL 改为可读的 `app/vX.Y.Z` 形式。
+- 新增真实发布格式回归测试。
+
 ## 3.0.0
 
 ### P0

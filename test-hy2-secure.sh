@@ -23,9 +23,20 @@ assert_bad validate_domain bad_domain
 assert_ok validate_bandwidth '100 mbps'
 assert_bad validate_bandwidth 'fast'
 [[ $(yaml_quote "a'b") == "'a''b'" ]] || fail 'YAML quote'
+[[ $(release_base) == 'https://github.com/apernet/hysteria/releases/download/app/v2.10.0' ]] || fail 'release URL'
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+cat >"$work/hashes.txt" <<'EOF'
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  build/hysteria-linux-amd64-avx
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  build/hysteria-linux-amd64
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc  ./hysteria-linux-arm64
+EOF
+[[ $(extract_expected_hash "$work/hashes.txt" hysteria-linux-amd64) == bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ]] || fail 'GNU hashes path parsing'
+[[ $(extract_expected_hash "$work/hashes.txt" hysteria-linux-amd64-avx) == aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]] || fail 'exact asset matching'
+printf 'SHA256 (dist/hysteria-linux-amd64) = %064d\n' 0 >"$work/hashes-bsd.txt"
+[[ $(extract_expected_hash "$work/hashes-bsd.txt" hysteria-linux-amd64) == $(printf '%064d' 0) ]] || fail 'BSD hashes parsing'
+
 SET_PORT=8443; SET_PASS="p'a:ss#word"; CERT_TYPE=selfsigned; SELF_CN=example.com
 RUN_MODE=STANDARD; BW_UP='100 mbps'; BW_DOWN=''; IGNORE_CLIENT_BW=false
 ENABLE_OBFS=1; OBFS_PASS="ob'fs"; PROTECT_PRIVATE=1; MASQ_ENABLE=0
