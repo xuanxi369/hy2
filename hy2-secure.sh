@@ -6,7 +6,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 027
 
-readonly SCRIPT_VERSION="3.1.0"
+readonly SCRIPT_VERSION="3.2.0"
 readonly DEFAULT_HY2_VERSION="v2.10.0"
 readonly HY2_REPO="apernet/hysteria"
 readonly HY2_BIN="/usr/local/bin/hy2"
@@ -48,6 +48,7 @@ INSTALL_PROFILE="PRODUCTION"
 RUN_MODE="STANDARD"
 SET_PORT="8443"
 SET_PASS=""
+USER_NAME="hy2-server"
 CERT_TYPE="selfsigned"
 ACME_DOMAIN=""
 ACME_EMAIL=""
@@ -70,6 +71,12 @@ LOG_TO_FILE="0"
 ENABLE_OBFS="0"
 OBFS_PASS=""
 PROTECT_PRIVATE="1"
+ENABLE_BRUTAL="0"
+BRUTAL_UP="1000"
+BRUTAL_DOWN="1000"
+ENABLE_SNIFF="1"
+ENABLE_MASQ="1"
+MASQ_URL="https://www.bing.com"
 
 run(){
   if (( DRY_RUN )); then printf '[DRY-RUN]'; printf ' %q' "$@"; printf '\n'; return 0; fi
@@ -128,6 +135,12 @@ usage(){ cat <<'EOF'
   --no-public-ip-query     禁止查询公网 IP
   --allow-private          不生成私网保护 ACL
   --auto-firewall          自动配置本地防火墙 (UFW/iptables)
+  --user-name NAME         备注名称（用于区分服务器）
+  --enable-brutal          启用 Brutal 拥塞控制
+  --brutal-up MBPS         Brutal 上行带宽 (默认 1000)
+  --brutal-down MBPS       Brutal 下行带宽 (默认 1000)
+  --disable-sniff          禁用协议嗅探
+  --masq-url URL           伪装域名 (默认 https://www.bing.com)
 EOF
 }
 
@@ -152,6 +165,12 @@ parse_args(){
       --no-public-ip-query) QUERY_PUBLIC_IP=0 ;;
       --allow-private) PROTECT_PRIVATE=0 ;;
       --auto-firewall) AUTO_FIREWALL=1 ;;
+      --enable-brutal) ENABLE_BRUTAL=1 ;;
+      --brutal-up) BRUTAL_UP=${2:?}; shift ;;
+      --brutal-down) BRUTAL_DOWN=${2:?}; shift ;;
+      --disable-sniff) ENABLE_SNIFF=0 ;;
+      --masq-url) MASQ_URL=${2:?}; shift ;;
+      --user-name) USER_NAME=${2:?}; shift ;;
       --help|-h) usage; exit 0 ;;
       *) die "未知参数：$1" ;;
     esac
@@ -188,11 +207,14 @@ load_meta(){
   CUSTOM_SNI=$(meta_get custom_sni "$CUSTOM_SNI")
   SELF_CN=$(meta_get self_cn "$SELF_CN")
   SET_PORT=$(meta_get port "$SET_PORT")
+  USER_NAME=$(meta_get username "$USER_NAME")
   BW_UP=$(meta_get bw_up "$BW_UP"); BW_DOWN=$(meta_get bw_down "$BW_DOWN")
   IGNORE_CLIENT_BW=$(meta_get ignore_client_bw "$IGNORE_CLIENT_BW")
-  MASQ_ENABLE=$(meta_get masq_enable "$MASQ_ENABLE"); MASQ_TYPE=$(meta_get masq_type "$MASQ_TYPE")
-  MASQ_URL=$(meta_get masq_url "$MASQ_URL"); MASQ_STRING=$(meta_get masq_string "$MASQ_STRING")
-  MASQ_HTTP=$(meta_get masq_http "$MASQ_HTTP"); MASQ_HTTPS=$(meta_get masq_https "$MASQ_HTTPS")
+  ENABLE_BRUTAL=$(meta_get enable_brutal "$ENABLE_BRUTAL")
+  BRUTAL_UP=$(meta_get brutal_up "$BRUTAL_UP"); BRUTAL_DOWN=$(meta_get brutal_down "$BRUTAL_DOWN")
+  ENABLE_SNIFF=$(meta_get enable_sniff "$ENABLE_SNIFF")
+  ENABLE_MASQ=$(meta_get enable_masq "$ENABLE_MASQ")
+  MASQ_URL=$(meta_get masq_url "$MASQ_URL")
   LOG_TO_FILE=$(meta_get log_to_file "$LOG_TO_FILE")
   ENABLE_OBFS=$(meta_get obfs "$ENABLE_OBFS"); OBFS_PASS=$(meta_get obfs_pass "$OBFS_PASS")
   PROTECT_PRIVATE=$(meta_get protect_private "$PROTECT_PRIVATE")
@@ -214,15 +236,16 @@ custom_key=$([[ $CERT_TYPE == custom ]] && printf '%s' "$CONF_DIR/certs/custom.k
 custom_sni=${CUSTOM_SNI}
 self_cn=${SELF_CN}
 port=${SET_PORT}
+username=${USER_NAME}
 bw_up=${BW_UP}
 bw_down=${BW_DOWN}
 ignore_client_bw=${IGNORE_CLIENT_BW}
-masq_enable=${MASQ_ENABLE}
-masq_type=${MASQ_TYPE}
+enable_brutal=${ENABLE_BRUTAL}
+brutal_up=${BRUTAL_UP}
+brutal_down=${BRUTAL_DOWN}
+enable_sniff=${ENABLE_SNIFF}
+enable_masq=${ENABLE_MASQ}
 masq_url=${MASQ_URL}
-masq_string=${MASQ_STRING}
-masq_http=${MASQ_HTTP}
-masq_https=${MASQ_HTTPS}
 log_to_file=${LOG_TO_FILE}
 obfs=${ENABLE_OBFS}
 obfs_pass=$([[ $ENABLE_OBFS == 1 ]] && printf '%s' "$OBFS_PASS")
@@ -576,6 +599,18 @@ generate_config(){
       printf '\nbandwidth:\n'; [[ -n $BW_UP ]] && printf '  up: %s\n' "$(yaml_quote "$BW_UP")"; [[ -n $BW_DOWN ]] && printf '  down: %s\n' "$(yaml_quote "$BW_DOWN")"
     fi
     printf '\nignoreClientBandwidth: %s\n' "$IGNORE_CLIENT_BW"
+    if [[ $ENABLE_BRUTAL == 1 ]]; then
+      printf '\nbrutal:\n  up: %s\n  down: %s\n' "$BRUTAL_UP" "$BRUTAL_DOWN"
+    fi
+    if [[ $ENABLE_SNIFF == 1 ]]; then
+      cat <<'EOF'
+
+sniff:
+  enable: true
+  timeout: 2s
+  rewriteDomain: false
+EOF
+    fi
     if [[ $RUN_MODE == LOW_RAM ]]; then
       cat <<'EOF'
 
@@ -607,15 +642,8 @@ acl:
     - reject(fe80::/10)
 EOF
     fi
-    if [[ $MASQ_ENABLE == 1 && $RUN_MODE != LOW_RAM ]]; then
-      printf '\nmasquerade:\n  type: %s\n' "$MASQ_TYPE"
-      case $MASQ_TYPE in
-        proxy) printf '  proxy:\n    url: %s\n    rewriteHost: true\n    insecure: false\n' "$(yaml_quote "$MASQ_URL")";;
-        string) printf '  string:\n    content: %s\n    statusCode: 200\n    headers:\n      content-type: text/plain\n' "$(yaml_quote "$MASQ_STRING")";;
-        file) printf '  file:\n    dir: %s\n' "$(yaml_quote "$CONF_DIR/masq")";;
-      esac
-      [[ -n $MASQ_HTTP ]] && printf '  listenHTTP: %s\n' "$(yaml_quote "$MASQ_HTTP")"
-      [[ -n $MASQ_HTTPS ]] && printf '  listenHTTPS: %s\n  forceHTTPS: %s\n' "$(yaml_quote "$MASQ_HTTPS")" "$MASQ_FORCE_HTTPS"
+    if [[ $ENABLE_MASQ == 1 && $RUN_MODE != LOW_RAM ]]; then
+      printf '\nmasquerade:\n  type: proxy\n  proxy:\n    url: %s\n    rewriteHost: true\n    insecure: false\n' "$(yaml_quote "$MASQ_URL")"
     fi
   } >"$out"
   chmod 640 "$out"
@@ -769,7 +797,8 @@ public_hosts(){
 print_client(){
   [[ -r $META_FILE && -r $CONF_FILE ]] || die "尚未安装"
   load_meta; SET_PASS=$(extract_password); public_hosts
-  local host='YOUR_SERVER_IP' uri_host sni insecure=false fp=''
+  local host='YOUR_SERVER_IP' uri_host sni insecure=false fp='' username_tag
+  username_tag=$(meta_get username 'hy2-server')
   if [[ $CERT_TYPE == acme ]]; then host=$ACME_DOMAIN; sni=$ACME_DOMAIN
   elif [[ $CERT_TYPE == custom ]]; then sni=$CUSTOM_SNI; [[ -n $PUBLIC_V4 ]] && host=$PUBLIC_V4 || { [[ -n $PUBLIC_V6 ]] && host="[$PUBLIC_V6]"; }
   else sni=$SELF_CN; insecure=true; [[ -n $PUBLIC_V4 ]] && host=$PUBLIC_V4 || { [[ -n $PUBLIC_V6 ]] && host="[$PUBLIC_V6]"; }; [[ -r $CONF_DIR/certs/server.crt ]] && fp=$(cert_fingerprint "$CONF_DIR/certs/server.crt")
@@ -787,8 +816,28 @@ EOF
   local link="hysteria2://$(urlencode "$SET_PASS")@${uri_host}:${SET_PORT}/?sni=$(urlencode "$sni")&insecure=$([[ $insecure == true ]] && echo 1 || echo 0)"
   [[ -n $fp ]] && link+="&pinSHA256=$(urlencode "$fp")"
   [[ $ENABLE_OBFS == 1 ]] && link+="&obfs=salamander&obfs-password=$(urlencode "$OBFS_PASS")"
+  link+="#$(urlencode "$username_tag")"
   printf '分享链接：%s\n' "$link"
+  generate_qrcode "$link"
 }
+
+generate_qrcode(){
+  local link=$1
+  if command_exists qrencode; then
+    info "二维码："
+    qrencode -t ANSIUTF8 "$link" 2>/dev/null || warn "终端不支持 UTF-8 二维码显示"
+  else
+    local qr_url="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=$(urlencode "$link")"
+    info "在线二维码链接（浏览器打开）："
+    echo "$qr_url"
+    if (( ! NON_INTERACTIVE )); then
+      if confirm "是否安装 qrencode 以在终端显示二维码？(y/N): " n; then
+        apt-get install -y qrencode && qrencode -t ANSIUTF8 "$link" 2>/dev/null || warn "安装失败"
+      fi
+    fi
+  fi
+}
+
 
 reconfigure(){
   [[ -r $META_FILE && -r $CONF_FILE ]] || die "尚未安装"
@@ -843,6 +892,7 @@ ask_install(){
   check_platform
   read -r -p "监听端口 [${SET_PORT}]：" x || true; SET_PORT=${x:-$SET_PORT}; validate_port "$SET_PORT" || die "端口无效"
   read -r -p '连接密码 [回车随机生成]：' SET_PASS || true; [[ -n $SET_PASS ]] || SET_PASS=$(random_secret 32)
+  read -r -p "备注名称（用于区分服务器）[${USER_NAME}]：" x || true; USER_NAME=${x:-$USER_NAME}
   echo '证书：1) 自签 2) ACME 3) 自备'; read -r -p '选择 [1]：' x || true
   case ${x:-1} in
     2) CERT_TYPE=acme; read -r -p '域名：' ACME_DOMAIN; read -r -p '邮箱：' ACME_EMAIL;;
@@ -852,6 +902,16 @@ ask_install(){
   confirm '启用私网/元数据地址保护 ACL？(Y/n)：' y && PROTECT_PRIVATE=1 || PROTECT_PRIVATE=0
   confirm '启用文件日志？(y/N)：' n && LOG_TO_FILE=1 || LOG_TO_FILE=0
   confirm '启用 Salamander？(y/N)：' n && { ENABLE_OBFS=1; OBFS_PASS=$(random_secret 24); } || { ENABLE_OBFS=0; OBFS_PASS=''; }
+  if confirm '启用 Brutal 拥塞控制？(推荐高延迟网络) (y/N)：' n; then
+    ENABLE_BRUTAL=1
+    read -r -p "上行带宽 (Mbps) [${BRUTAL_UP}]：" x || true; BRUTAL_UP=${x:-$BRUTAL_UP}
+    read -r -p "下行带宽 (Mbps) [${BRUTAL_DOWN}]：" x || true; BRUTAL_DOWN=${x:-$BRUTAL_DOWN}
+  fi
+  read -r -p "伪装域名 [${MASQ_URL}]：" x || true; MASQ_URL=${x:-$MASQ_URL}
+  if [[ ! $MASQ_URL =~ ^https:// ]]; then
+    warn "伪装域名必须以 https:// 开头，已重置为默认值"
+    MASQ_URL="https://www.bing.com"
+  fi
   if [[ $(detect_firewall) != "none" ]]; then
     confirm '是否自动配置本地防火墙放行端口？(Y/n)：' y && AUTO_FIREWALL=1 || AUTO_FIREWALL=0
   fi

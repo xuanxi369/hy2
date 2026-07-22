@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.2.0
+
+- 新增用户名备注功能，用于区分不同服务器（显示在分享链接 # 片段）
+- 新增 Brutal 拥塞控制模式，用户可选择启用并自定义带宽
+- 默认启用协议嗅探（Sniff），使用保守配置确保兼容性
+- 默认启用伪装域名（Masquerade），默认伪装为 https://www.bing.com
+- 新增二维码生成功能（优先使用 qrencode，否则提供在线链接）
+- 新增命令行参数：--user-name, --enable-brutal, --brutal-up, --brutal-down, --disable-sniff, --masq-url
+- 简化 Masquerade 配置，只使用 proxy 类型
+
 ## 3.1.0
 
 - 新增自动配置本地防火墙功能（支持 UFW 和 iptables）
