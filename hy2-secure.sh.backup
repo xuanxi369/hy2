@@ -6,7 +6,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 027
 
-readonly SCRIPT_VERSION="3.1.0"
+readonly SCRIPT_VERSION="3.0.2"
 readonly DEFAULT_HY2_VERSION="v2.10.0"
 readonly HY2_REPO="apernet/hysteria"
 readonly HY2_BIN="/usr/local/bin/hy2"
@@ -20,7 +20,6 @@ readonly LOG_DIR="/var/log/hy2"
 readonly SERVICE_FILE="/etc/systemd/system/hy2.service"
 readonly LOGROTATE_FILE="/etc/logrotate.d/hy2"
 readonly BACKUP_ROOT="/var/backups/hy2"
-readonly FIREWALL_MARKER="/etc/hy2/.firewall_managed"
 
 RED='\033[31m'; GREEN='\033[32m'; YELLOW='\033[33m'; CYAN='\033[36m'; BLUE='\033[34m'; PLAIN='\033[0m'
 info(){ printf '%b[INFO]%b %s\n' "$CYAN" "$PLAIN" "$*"; }
@@ -35,7 +34,6 @@ DRY_RUN=0
 ASSUME_YES=0
 NON_INTERACTIVE=0
 QUERY_PUBLIC_IP=1
-AUTO_FIREWALL=0
 ACTION="menu"
 OFFLINE_BIN=""
 OFFLINE_HASHES=""
@@ -127,7 +125,6 @@ usage(){ cat <<'EOF'
   --offline-hashes PATH    官方 hashes.txt
   --no-public-ip-query     禁止查询公网 IP
   --allow-private          不生成私网保护 ACL
-  --auto-firewall          自动配置本地防火墙 (UFW/iptables)
 EOF
 }
 
@@ -151,7 +148,6 @@ parse_args(){
       --offline-hashes) OFFLINE_HASHES=${2:?}; shift ;;
       --no-public-ip-query) QUERY_PUBLIC_IP=0 ;;
       --allow-private) PROTECT_PRIVATE=0 ;;
-      --auto-firewall) AUTO_FIREWALL=1 ;;
       --help|-h) usage; exit 0 ;;
       *) die "未知参数：$1" ;;
     esac
@@ -300,101 +296,6 @@ check_port_free(){
   fi
 }
 
-detect_firewall(){
-  if command_exists ufw && ufw status 2>/dev/null | grep -q '^Status: active'; then
-    echo "ufw"
-  elif command_exists iptables && iptables -L -n >/dev/null 2>&1; then
-    echo "iptables"
-  else
-    echo "none"
-  fi
-}
-
-configure_local_firewall(){
-  local port=$1
-  local fw_type
-  fw_type=$(detect_firewall)
-  
-  case $fw_type in
-    ufw)
-      info "检测到 UFW 防火墙，正在配置..."
-      if ufw status | grep -Eq "${port}/udp[[:space:]]+ALLOW"; then
-        ok "UFW 已存在 ${port}/udp 放行规则"
-        return 0
-      fi
-      if (( DRY_RUN )); then
-        info "[DRY-RUN] ufw allow ${port}/udp"
-        return 0
-      fi
-      if ufw allow "${port}/udp" >/dev/null 2>&1; then
-        ok "UFW 已添加 ${port}/udp 放行规则"
-        echo "ufw:${port}" > "$FIREWALL_MARKER"
-        return 0
-      else
-        warn "UFW 规则添加失败，请手动执行：sudo ufw allow ${port}/udp"
-        return 1
-      fi
-      ;;
-    iptables)
-      info "检测到 iptables 防火墙，正在配置..."
-      if iptables -C INPUT -p udp --dport "$port" -j ACCEPT >/dev/null 2>&1; then
-        ok "iptables 已存在 ${port}/udp 放行规则"
-        return 0
-      fi
-      if (( DRY_RUN )); then
-        info "[DRY-RUN] iptables -A INPUT -p udp --dport ${port} -j ACCEPT"
-        return 0
-      fi
-      if iptables -A INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null; then
-        ok "iptables 已添加 ${port}/udp 放行规则"
-        if command_exists iptables-save && command_exists netfilter-persistent; then
-          netfilter-persistent save >/dev/null 2>&1 && info "iptables 规则已持久化" || warn "iptables 规则持久化失败"
-        elif command_exists iptables-save && [[ -d /etc/iptables ]]; then
-          iptables-save > /etc/iptables/rules.v4 2>/dev/null && info "iptables 规则已持久化" || warn "iptables 规则持久化失败"
-        else
-          warn "未找到 iptables 持久化工具，重启后规则将丢失"
-          warn "建议安装：apt-get install iptables-persistent"
-        fi
-        echo "iptables:${port}" > "$FIREWALL_MARKER"
-        return 0
-      else
-        warn "iptables 规则添加失败，请手动执行：sudo iptables -A INPUT -p udp --dport ${port} -j ACCEPT"
-        return 1
-      fi
-      ;;
-    none)
-      info "未检测到活动的本地防火墙 (UFW/iptables)"
-      return 0
-      ;;
-    *)
-      warn "不支持的防火墙类型：${fw_type}"
-      return 1
-      ;;
-  esac
-}
-
-remove_firewall_rule(){
-  [[ -r $FIREWALL_MARKER ]] || return 0
-  local marker port fw_type
-  marker=$(cat "$FIREWALL_MARKER")
-  fw_type=${marker%%:*}
-  port=${marker##*:}
-  
-  case $fw_type in
-    ufw)
-      if confirm "是否删除 UFW 规则 ${port}/udp？(y/N): " n; then
-        ufw delete allow "${port}/udp" >/dev/null 2>&1 && ok "已删除 UFW 规则" || warn "删除 UFW 规则失败"
-      fi
-      ;;
-    iptables)
-      if confirm "是否删除 iptables 规则 ${port}/udp？(y/N): " n; then
-        iptables -D INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null && ok "已删除 iptables 规则" || warn "删除 iptables 规则失败"
-      fi
-      ;;
-  esac
-  rm -f "$FIREWALL_MARKER"
-}
-
 preflight_network(){
   check_port_free u "$SET_PORT"
   if [[ $CERT_TYPE == acme ]]; then
@@ -406,40 +307,11 @@ preflight_network(){
     [[ -n $resolved ]] || die "ACME 域名无法解析：$ACME_DOMAIN"
     info "ACME DNS：$(tr '\n' ' ' <<<"$resolved")"
   fi
-  
-  local fw_type
-  fw_type=$(detect_firewall)
-  
-  if [[ $fw_type != "none" ]]; then
-    if (( AUTO_FIREWALL )); then
-      info "自动配置模式已启用"
-      configure_local_firewall "$SET_PORT" || warn "本地防火墙自动配置失败"
-    elif (( ! NON_INTERACTIVE )); then
-      if confirm "检测到 ${fw_type} 防火墙，是否自动配置放行 ${SET_PORT}/udp？(Y/n): " y; then
-        configure_local_firewall "$SET_PORT" || warn "本地防火墙配置失败"
-      else
-        warn "跳过本地防火墙配置，请稍后手动执行"
-        if [[ $fw_type == "ufw" ]]; then
-          info "手动命令：sudo ufw allow ${SET_PORT}/udp"
-        elif [[ $fw_type == "iptables" ]]; then
-          info "手动命令：sudo iptables -A INPUT -p udp --dport ${SET_PORT} -j ACCEPT"
-        fi
-      fi
-    else
-      info "检测到 ${fw_type}，但未启用自动配置（可使用 --auto-firewall）"
-      if [[ $fw_type == "ufw" ]]; then
-        warn "请手动执行：sudo ufw allow ${SET_PORT}/udp"
-      elif [[ $fw_type == "iptables" ]]; then
-        warn "请手动执行：sudo iptables -A INPUT -p udp --dport ${SET_PORT} -j ACCEPT"
-      fi
-    fi
+  if command_exists ufw && ufw status 2>/dev/null | grep -q '^Status: active'; then
+    if ! ufw status | grep -Eq "${SET_PORT}/udp[[:space:]]+ALLOW"; then warn "UFW 已启用，但未确认 ${SET_PORT}/udp 已放行"; fi
   fi
-  
-  if command_exists nft && nft list ruleset >/dev/null 2>&1; then 
-    info "检测到 nftables，请确认 UDP ${SET_PORT} 入站规则"
-  fi
-  
-  warn "重要提示：如使用云服务器（腾讯云/阿里云/AWS等），还需在云控制台的安全组中放行 UDP ${SET_PORT}"
+  if command_exists nft && nft list ruleset >/dev/null 2>&1; then info "检测到 nftables，请确认 UDP ${SET_PORT} 入站规则"; fi
+  warn "云服务器还需在安全组中放行 UDP ${SET_PORT}"
 }
 
 create_service_user(){
@@ -828,9 +700,6 @@ service_control(){
 
 uninstall(){
   confirm "彻底卸载 Hysteria 2？(y/N): " n || return 0
-  
-  remove_firewall_rule
-  
   begin_transaction
   systemctl disable --now hy2 >/dev/null 2>&1 || true
   rm -f "$SERVICE_FILE" "$LOGROTATE_FILE" "$HY2_BIN"; rm -rf "$CONF_DIR"
@@ -852,9 +721,6 @@ ask_install(){
   confirm '启用私网/元数据地址保护 ACL？(Y/n)：' y && PROTECT_PRIVATE=1 || PROTECT_PRIVATE=0
   confirm '启用文件日志？(y/N)：' n && LOG_TO_FILE=1 || LOG_TO_FILE=0
   confirm '启用 Salamander？(y/N)：' n && { ENABLE_OBFS=1; OBFS_PASS=$(random_secret 24); } || { ENABLE_OBFS=0; OBFS_PASS=''; }
-  if [[ $(detect_firewall) != "none" ]]; then
-    confirm '是否自动配置本地防火墙放行端口？(Y/n)：' y && AUTO_FIREWALL=1 || AUTO_FIREWALL=0
-  fi
   install_transaction
 }
 

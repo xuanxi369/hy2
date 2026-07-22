@@ -18,6 +18,7 @@
 - cgroup 感知的低内存检测。
 - 支持非交互、`--dry-run`、配置差异、升级与回滚。
 - 公网 IP 查询会明确提示，可用 `--no-public-ip-query` 禁止。
+- **自动配置本地防火墙**（UFW/iptables），支持交互式和命令行模式。
 
 ## 使用
 
@@ -31,6 +32,13 @@ sudo ./hy2-secure.sh
 ```bash
 sudo ./hy2-secure.sh install --non-interactive --yes \
   --version v2.10.0 --port 8443 --password '强密码'
+```
+
+非交互自签安装 + 自动配置防火墙：
+
+```bash
+sudo ./hy2-secure.sh install --non-interactive --yes \
+  --version v2.10.0 --port 8443 --password '强密码' --auto-firewall
 ```
 
 ACME：
@@ -77,6 +85,8 @@ bash test-hy2-secure.sh
 
 ## 注意
 
-- 云厂商安全组仍需人工放行 UDP 服务端口。
+- 云厂商安全组仍需人工放行 UDP 服务端口（脚本无法自动配置云平台 API）。
+- 脚本可自动配置本地防火墙（UFW/iptables），交互模式会询问，或使用 `--auto-firewall` 参数。
 - 默认 ACL 会阻止客户端访问私网、回环和链路本地地址；确有需要时使用 `--allow-private`。
 - 脚本会保留 `/var/backups/hy2`，卸载不会自动删除备份和专用用户。
+- 防火墙规则在 `/etc/hy2/.firewall_managed` 中记录，卸载时可选择清理。

@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.1.0
+
+- 新增自动配置本地防火墙功能（支持 UFW 和 iptables）
+- 添加 `--auto-firewall` 参数用于非交互模式自动配置
+- 交互式安装时询问是否自动配置防火墙
+- 卸载时可选择清理防火墙规则
+- 防火墙规则自动持久化（iptables-persistent 或 /etc/iptables/rules.v4）
+- 改进防火墙检测逻辑，区分云安全组和本地防火墙
+- 在 `/etc/hy2/.firewall_managed` 记录防火墙管理状态
+
 ## 3.0.2
 
 - 修复 Hysteria 2 ACL CIDR 语法：CIDR 地址必须直接写入 `reject(10.0.0.0/8)`，不能使用不存在的 `cidr:` 前缀。
