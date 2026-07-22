@@ -27,24 +27,29 @@
 
 ## 使用
 
-菜单模式
+方式一：菜单模式安装
+
 ```bash
 chmod +x hy2-secure.sh
 sudo ./hy2-secure.sh
 ```
 
-交互式安装（会询问所有配置）
+方式二：交互式安装（会询问所有配置）
+
 ```bash
 chmod +x hy2-secure.sh
 sudo ./hy2-secure.sh install
 ```
 
-非交互自签安装：
+方式三：命令行快速部署（跳过询问）
 
 ```bash
 sudo ./hy2-secure.sh install --non-interactive --yes \
-  --version v2.10.0 --port 8443 --password '强密码'
+  --port 9527 --password 'MyPass' --user-name 'MyServer' \
+  --enable-brutal --auto-firewall
 ```
+
+## 调试
 
 非交互自签安装 + 自动配置防火墙：
 
@@ -85,14 +90,6 @@ sudo ./hy2-secure.sh install --dry-run
 sudo ./hy2-secure.sh install \
   --offline-binary ./hysteria-linux-amd64 \
   --offline-hashes ./hashes.txt
-```
-
-## 测试
-
-```bash
-bash -n hy2-secure.sh
-shellcheck -x hy2-secure.sh test-hy2-secure.sh
-bash test-hy2-secure.sh
 ```
 
 ## 注意
