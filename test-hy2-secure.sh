@@ -43,7 +43,9 @@ ENABLE_OBFS=1; OBFS_PASS="ob'fs"; PROTECT_PRIVATE=1; MASQ_ENABLE=0
 generate_config "$work/config.yaml"
 assert_contains "$work/config.yaml" "listen: ':8443'"
 assert_contains "$work/config.yaml" "password: 'p''a:ss#word'"
-assert_contains "$work/config.yaml" 'reject(cidr:10.0.0.0/8)'
+assert_contains "$work/config.yaml" 'reject(10.0.0.0/8)'
+assert_contains "$work/config.yaml" 'reject(fc00::/7)'
+assert_not_contains "$work/config.yaml" 'reject(cidr:'
 
 RAM_MB=512; LOG_TO_FILE=0
 generate_unit "$work/hy2.service"

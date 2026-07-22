@@ -6,7 +6,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 027
 
-readonly SCRIPT_VERSION="3.0.1"
+readonly SCRIPT_VERSION="3.0.2"
 readonly DEFAULT_HY2_VERSION="v2.10.0"
 readonly HY2_REPO="apernet/hysteria"
 readonly HY2_BIN="/usr/local/bin/hy2"
@@ -468,15 +468,15 @@ EOF
 
 acl:
   inline:
-    - reject(cidr:127.0.0.0/8)
-    - reject(cidr:10.0.0.0/8)
-    - reject(cidr:172.16.0.0/12)
-    - reject(cidr:192.168.0.0/16)
-    - reject(cidr:169.254.0.0/16)
-    - reject(cidr:100.64.0.0/10)
-    - reject(cidr:::1/128)
-    - reject(cidr:fc00::/7)
-    - reject(cidr:fe80::/10)
+    - reject(127.0.0.0/8)
+    - reject(10.0.0.0/8)
+    - reject(172.16.0.0/12)
+    - reject(192.168.0.0/16)
+    - reject(169.254.0.0/16)
+    - reject(100.64.0.0/10)
+    - reject(::1/128)
+    - reject(fc00::/7)
+    - reject(fe80::/10)
 EOF
     fi
     if [[ $MASQ_ENABLE == 1 && $RUN_MODE != LOW_RAM ]]; then

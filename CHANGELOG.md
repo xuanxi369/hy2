@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.2
+
+- 修复 Hysteria 2 ACL CIDR 语法：CIDR 地址必须直接写入 `reject(10.0.0.0/8)`，不能使用不存在的 `cidr:` 前缀。
+- 同步修复 IPv4、IPv6、回环、链路本地和 CGNAT 保护规则。
+- 增加断言，禁止生成任何 `reject(cidr:...)` 规则。
+
 ## 3.0.1
 
 - 修复官方 `hashes.txt` 使用 `build/文件名` 时无法匹配资产的问题。
