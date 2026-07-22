@@ -942,7 +942,7 @@ main(){
   require_root; parse_args "$@"
   exec 9>/run/lock/hy2-secure.lock; flock -n 9 || die "已有另一个实例正在运行"
   case $ACTION in
-    menu) menu;; install) install_transaction;; configure) reconfigure;; upgrade) upgrade_binary;;
+    menu) menu;; install) ask_install;; configure) reconfigure;; upgrade) upgrade_binary;;
     status) show_status;; client) print_client;; rollback) manual_rollback;; uninstall) uninstall;; *) usage; die "未知动作：$ACTION";;
   esac
 }
