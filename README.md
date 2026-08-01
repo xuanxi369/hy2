@@ -41,7 +41,7 @@ VPS适配：
 git clone https://github.com/xuanxi369/hy2.git && cd hy2
 ```
 
-方式一：菜单模式安装
+方式一：菜单模式安装（小白全勾选 Y 就行）
 
 ```bash
 chmod +x hy2-secure.sh
