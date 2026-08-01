@@ -56,13 +56,13 @@ ACME_TYPE="http"
 CUSTOM_CERT=""
 CUSTOM_KEY=""
 CUSTOM_SNI=""
-SELF_CN="bing.com"
+SELF_CN="baidu.com"
 BW_UP=""
 BW_DOWN=""
 IGNORE_CLIENT_BW="false"
 MASQ_ENABLE="0"
 MASQ_TYPE="proxy"
-MASQ_URL="https://www.bing.com"
+MASQ_URL="https://www.baidu.com"
 MASQ_STRING="OK"
 MASQ_HTTP=""
 MASQ_HTTPS=""
@@ -76,7 +76,7 @@ BRUTAL_UP="1000"
 BRUTAL_DOWN="1000"
 ENABLE_SNIFF="1"
 ENABLE_MASQ="1"
-MASQ_URL="https://www.bing.com"
+MASQ_URL="https://www.baidu.com"
 
 run(){
   if (( DRY_RUN )); then printf '[DRY-RUN]'; printf ' %q' "$@"; printf '\n'; return 0; fi
@@ -140,7 +140,7 @@ usage(){ cat <<'EOF'
   --brutal-up MBPS         Brutal 上行带宽 (默认 1000)
   --brutal-down MBPS       Brutal 下行带宽 (默认 1000)
   --disable-sniff          禁用协议嗅探
-  --masq-url URL           伪装域名 (默认 https://www.bing.com)
+  --masq-url URL           伪装域名 (默认 https://www.baidu.com)
 EOF
 }
 
@@ -572,7 +572,7 @@ prepare_certificates(){
       local cert_pub key_pub
       cert_pub=$(openssl x509 -in "$CUSTOM_CERT" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | awk '{print $1}')
       key_pub=$(openssl pkey -in "$CUSTOM_KEY" -pubout -outform DER | sha256sum | awk '{print $1}')
-      [[ $cert_pub == "$key_pub" ]] || die "证书与私��不匹配"
+      [[ $cert_pub == "$key_pub" ]] || die "证书与私钥不匹配"
       cp "$CUSTOM_CERT" "$stage/certs/custom.crt"; cp "$CUSTOM_KEY" "$stage/certs/custom.key"
       ;;
     acme) ;;
@@ -910,7 +910,7 @@ ask_install(){
   read -r -p "伪装域名 [${MASQ_URL}]：" x || true; MASQ_URL=${x:-$MASQ_URL}
   if [[ ! $MASQ_URL =~ ^https:// ]]; then
     warn "伪装域名必须以 https:// 开头，已重置为默认值"
-    MASQ_URL="https://www.bing.com"
+    MASQ_URL="https://www.baidu.com"
   fi
   if [[ $(detect_firewall) != "none" ]]; then
     confirm '是否自动配置本地防火墙放行端口？(Y/n)：' y && AUTO_FIREWALL=1 || AUTO_FIREWALL=0
