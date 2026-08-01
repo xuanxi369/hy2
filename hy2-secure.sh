@@ -821,7 +821,11 @@ install_transaction(){
     chown -R "$HY2_USER":"$HY2_GROUP" "$CONF_DIR/acme" "$LOG_DIR"
   fi
   install -m 0755 "$stage_bin" "${HY2_BIN}.new"; mv -f "${HY2_BIN}.new" "$HY2_BIN"
-  install -m 0640 -o root -g "$HY2_GROUP" "$stage_conf" "$CONF_FILE"
+  if (( IS_CONTAINER )); then
+    install -m 0640 -o root -g root "$stage_conf" "$CONF_FILE"
+  else
+    install -m 0640 -o root -g "$HY2_GROUP" "$stage_conf" "$CONF_FILE"
+  fi
   install -m 0600 -o root -g root "$stage_meta" "$META_FILE"
   printf '%s\n' "$RUN_MODE" >"$MODE_FILE"; chmod 600 "$MODE_FILE"
   install -m 0644 "$stage_unit" "$SERVICE_FILE"
