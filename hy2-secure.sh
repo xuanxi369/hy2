@@ -748,7 +748,6 @@ TasksMax=1024
 ${mem_lines}
 EOF
   fi
-EOF
   if [[ $LOG_TO_FILE == 1 ]]; then
     printf 'StandardOutput=append:%s/hy2.log\nStandardError=append:%s/hy2.err.log\n' "$LOG_DIR" "$LOG_DIR" >>"$out"
   else
