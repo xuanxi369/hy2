@@ -46,6 +46,7 @@ PASS_SET=0
 HY2_VERSION="$DEFAULT_HY2_VERSION"
 INSTALL_PROFILE="PRODUCTION"
 RUN_MODE="STANDARD"
+IS_CONTAINER=0
 SET_PORT="8443"
 SET_PASS=""
 USER_NAME="hy2-server"
@@ -275,6 +276,7 @@ check_platform(){
   fi
   for c in "${required[@]}"; do command_exists "$c" || die "关键依赖不可用：$c"; done
   detect_memory
+  detect_container
 }
 
 detect_memory(){
@@ -292,6 +294,26 @@ detect_memory(){
   RAM_MB=$((host_bytes/1024/1024))
   if (( RAM_MB <= 200 )); then RUN_MODE=LOW_RAM; else [[ $RUN_MODE == LOW_RAM ]] && RUN_MODE=STANDARD; fi
   info "有效内存限制：${RAM_MB} MiB；模式：${RUN_MODE}"
+}
+
+detect_container(){
+  IS_CONTAINER=0
+  if [[ -r /run/systemd/container ]]; then
+    IS_CONTAINER=1
+  elif grep -q 'container=' /proc/1/environ 2>/dev/null; then
+    IS_CONTAINER=1
+  elif [[ -f /.dockerenv ]]; then
+    IS_CONTAINER=1
+  elif grep -qE '/(docker|lxc|nspawn)/' /proc/1/cgroup 2>/dev/null; then
+    IS_CONTAINER=1
+  fi
+  if (( IS_CONTAINER )); then
+    warn "检测到容器环境，将禁用 namespace/用户隔离等安全加固选项"
+    warn "Hy2 将以 root 运行（安全性依赖宿主机容器隔离）"
+    if [[ $CERT_TYPE == acme ]]; then
+      warn "容器中 ACME 证书可能因端口冲突无法自动签发，建议改用自签或自备证书"
+    fi
+  fi
 }
 
 validate_inputs(){
@@ -655,7 +677,37 @@ generate_unit(){
     local mem_limit=$(( RAM_MB * 70 / 100 )); (( mem_limit < 48 )) && mem_limit=48
     mem_lines="Environment=GOGC=20\nEnvironment=GOMEMLIMIT=${mem_limit}MiB\nMemoryHigh=$((RAM_MB*80/100))M\nMemoryMax=$((RAM_MB*90/100))M"
   fi
-  cat >"$out" <<EOF
+  if (( IS_CONTAINER )); then
+    cat >"$out" <<EOF
+[Unit]
+Description=Hysteria 2 Service (Container)
+Documentation=https://v2.hysteria.network/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${HY2_BIN} server -c ${CONF_FILE}
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=1048576
+WorkingDirectory=${CONF_DIR}
+UMask=0027
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+ReadWritePaths=-${CONF_DIR}/acme ${LOG_DIR}
+RuntimeDirectory=hy2
+TasksMax=1024
+${mem_lines}
+EOF
+  else
+    cat >"$out" <<EOF
 [Unit]
 Description=Hysteria 2 Service
 Documentation=https://v2.hysteria.network/
@@ -695,6 +747,8 @@ RuntimeDirectory=hy2
 TasksMax=1024
 ${mem_lines}
 EOF
+  fi
+EOF
   if [[ $LOG_TO_FILE == 1 ]]; then
     printf 'StandardOutput=append:%s/hy2.log\nStandardError=append:%s/hy2.err.log\n' "$LOG_DIR" "$LOG_DIR" >>"$out"
   else
@@ -707,7 +761,10 @@ WantedBy=multi-user.target
 EOF
 }
 
-generate_logrotate(){ cat >"$1" <<EOF
+generate_logrotate(){
+  local su_user="$HY2_USER" su_group="$HY2_GROUP"
+  (( IS_CONTAINER )) && { su_user="root"; su_group="root"; }
+  cat >"$1" <<EOF
 ${LOG_DIR}/*.log {
   daily
   rotate 14
@@ -717,7 +774,7 @@ ${LOG_DIR}/*.log {
   missingok
   notifempty
   copytruncate
-  su ${HY2_USER} ${HY2_GROUP}
+  su ${su_user} ${su_group}
 }
 EOF
 }
@@ -741,15 +798,29 @@ install_transaction(){
   confirm "应用以上变更？(y/N): " n || { info "已取消"; rm -rf "$work"; return; }
 
   begin_transaction
-  create_service_user
+  if (( ! IS_CONTAINER )); then
+    create_service_user
+  fi
   systemctl stop hy2 >/dev/null 2>&1 || true
-  install -d -m 0750 -o root -g "$HY2_GROUP" "$CONF_DIR"
-  install -d -m 0750 -o "$HY2_USER" -g "$HY2_GROUP" "$CONF_DIR/acme" "$LOG_DIR"
-  install -d -m 0750 -o root -g "$HY2_GROUP" "$CONF_DIR/certs" "$CONF_DIR/masq"
+  if (( IS_CONTAINER )); then
+    # 容器中统一用 root 权限
+    install -d -m 0750 -o root -g root "$CONF_DIR"
+    install -d -m 0750 -o root -g root "$CONF_DIR/acme" "$LOG_DIR"
+    install -d -m 0750 -o root -g root "$CONF_DIR/certs" "$CONF_DIR/masq"
+  else
+    install -d -m 0750 -o root -g "$HY2_GROUP" "$CONF_DIR"
+    install -d -m 0750 -o "$HY2_USER" -g "$HY2_GROUP" "$CONF_DIR/acme" "$LOG_DIR"
+    install -d -m 0750 -o root -g "$HY2_GROUP" "$CONF_DIR/certs" "$CONF_DIR/masq"
+  fi
   cp -a "$work/conf/certs/." "$CONF_DIR/certs/" 2>/dev/null || true
   cp -a "$work/conf/masq/." "$CONF_DIR/masq/" 2>/dev/null || true
-  chown -R root:"$HY2_GROUP" "$CONF_DIR/certs" "$CONF_DIR/masq"
-  chown -R "$HY2_USER":"$HY2_GROUP" "$CONF_DIR/acme" "$LOG_DIR"
+  if (( IS_CONTAINER )); then
+    chown -R root:root "$CONF_DIR/certs" "$CONF_DIR/masq"
+    chown -R root:root "$CONF_DIR/acme" "$LOG_DIR"
+  else
+    chown -R root:"$HY2_GROUP" "$CONF_DIR/certs" "$CONF_DIR/masq"
+    chown -R "$HY2_USER":"$HY2_GROUP" "$CONF_DIR/acme" "$LOG_DIR"
+  fi
   install -m 0755 "$stage_bin" "${HY2_BIN}.new"; mv -f "${HY2_BIN}.new" "$HY2_BIN"
   install -m 0640 -o root -g "$HY2_GROUP" "$stage_conf" "$CONF_FILE"
   install -m 0600 -o root -g root "$stage_meta" "$META_FILE"
