@@ -106,6 +106,22 @@ sudo ./hy2-secure.sh install \
   --offline-hashes ./hashes.txt
 ```
 
+
+
+删除程序以及服务
+rm -rf hy2
+```bash
+rm -rf hy2
+sudo pkill -9 -f 脚本名称.sh
+ps aux | grep 脚本名称.sh
+ls -la
+ls -la /tmp/*.lock /var/run/*.pid 2>/dev/null
+rm -f *.lock *.pid .*.lock
+rm -f /tmp/*.lock /var/run/*.pid
+```
+
+
+
 ## 注意
 
 - 云厂商安全组仍需人工放行 UDP 服务端口（脚本无法自动配置云平台 API）。
